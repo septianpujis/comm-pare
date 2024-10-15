@@ -3,8 +3,6 @@ let imageLock = false;
 let images = []; // Store all images
 
 function createMenu() {
-  console.log(`images called from createMenu : ${images}`);
-
   const menu = document.createElement("div");
   menu.id = "image-controller-menu";
 
@@ -17,9 +15,12 @@ function createMenu() {
   <button id="lockButton">Lock</button>
   </div>
   <div id="imageList"></div>
+  <div>
+
   <input type="range" id="opacitySlider" min="0" max="1" step="0.1" value="1" disabled>
   <input type="number" id="positionX" placeholder="X Position" disabled>
   <input type="number" id="positionY" placeholder="Y Position" disabled>
+  </div>
   <button id="closeButton">x</button>
     `;
 
@@ -51,7 +52,6 @@ function toggleLock() {
 }
 
 async function saveImages() {
-  console.log(`images called from saveImages : ${images}`);
   const db = await openDB();
 
   // Clear existing data
@@ -93,7 +93,6 @@ function openDB() {
 }
 
 async function pasteImage() {
-  console.log(`images called from pasteImages : ${images}`);
   const items = await navigator.clipboard.read();
   for (const item of items) {
     for (const type of item.types) {
@@ -111,6 +110,7 @@ async function pasteImage() {
         imgWrapper.style.transform = "translateX(-50%)";
         imgWrapper.style.zIndex = "9999";
         imgWrapper.style.opacity = "1";
+        imgWrapper.style.maxWidth = "100%";
 
         const img = document.createElement("img");
         img.src = url;
@@ -123,10 +123,11 @@ async function pasteImage() {
           imgWrapper.style.height = `${img.naturalHeight}px`;
         };
 
+        imgWrapper.onclick = () => selectImage(imgWrapper);
         imgWrapper.appendChild(img);
         document.body.appendChild(imgWrapper);
         images.push(imgWrapper); // Store reference to the wrapper
-
+        selectImage(imgWrapper);
         makeDraggable(imgWrapper); // Make the wrapper div draggable
         addImageToList(imgWrapper); // Add image to the list
 
@@ -138,7 +139,6 @@ async function pasteImage() {
 }
 
 async function loadImages() {
-  console.log(`images called from loadImages : ${images}`);
   const db = await openDB();
   const transaction = db.transaction("images");
   const store = transaction.objectStore("images");
@@ -156,13 +156,14 @@ async function loadImages() {
         imgWrapper.style.left = data.left;
         imgWrapper.style.top = data.top;
         imgWrapper.style.transform = "translateX(-50%)";
+        imgWrapper.style.maxWidth = "100%";
         imgWrapper.style.cursor = "move";
+        imgWrapper.style.opacity = data.opacity;
 
         const img = document.createElement("img");
         img.src = URL.createObjectURL(data.blob);
         img.style.pointerEvents = "none";
         img.style.userSelect = "none";
-        img.style.opacity = data.opacity;
 
         img.onload = () => {
           imgWrapper.style.width = `${img.naturalWidth}px`;
@@ -170,6 +171,7 @@ async function loadImages() {
         };
 
         imgWrapper.appendChild(img);
+        imgWrapper.onclick = () => selectImage(imgWrapper);
         document.body.appendChild(imgWrapper);
         images.push(imgWrapper);
 
@@ -201,7 +203,6 @@ function addImageToList(img) {
     removeImage(img, imgItem);
   };
 
-  imgItem.onclick = () => selectImage(img);
   imgItem.appendChild(removeButton);
   imageList.appendChild(imgItem);
 }
@@ -244,13 +245,13 @@ function makeDraggable(img) {
     offsetY = e.clientY - img.getBoundingClientRect().top;
 
     const onMouseMove = (e) => {
-      img.style.left = `calc(50% + ${e.clientX - offsetX + window.scrollX}px)`;
+      img.style.left = `${e.clientX - offsetX + window.scrollX}px`;
       img.style.top = `${e.clientY - offsetY + window.scrollY}px`;
 
       // Update the position inputs
       if (window.currentImage === img) {
         document.getElementById("positionX").value = parseInt(
-          e.clientX - offsetX + window.scrollX,
+          img.style.left,
           10
         );
         document.getElementById("positionY").value = parseInt(
