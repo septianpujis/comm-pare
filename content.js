@@ -11,16 +11,14 @@ function createMenu() {
   ${style}
   </style>
   <button id="pasteButton">Paste</button>
-  <div class="image-control-buttons">
-  <button id="lockButton">Lock</button>
-  </div>
   <div id="imageList"></div>
-  <div>
-
-  <input type="range" id="opacitySlider" min="0" max="1" step="0.1" value="1" disabled>
-  <input type="number" id="positionX" placeholder="X Position" disabled>
-  <input type="number" id="positionY" placeholder="Y Position" disabled>
+  
+  <div class="control-container">
+    <input type="range" id="opacitySlider" min="0" max="1" step="0.1" value="1" disabled>
+    <input type="number" id="positionX" placeholder="X Position" disabled>
+    <input type="number" id="positionY" placeholder="Y Position" disabled>
   </div>
+
   <button id="closeButton">x</button>
     `;
 
@@ -36,19 +34,6 @@ function createMenu() {
 
     menu.classList.toggle("minimize", menuVisible);
   });
-  document.getElementById("lockButton").addEventListener("click", toggleLock);
-}
-
-function toggleLock() {
-  imageLock = !imageLock;
-  const imageWrappers = document.getElementsByClassName(
-    "comm-pare-image-wrapper"
-  );
-  if (imageWrappers.length > 0) {
-    Array.from(imageWrappers).forEach(
-      (wrapper) => (wrapper.style.pointerEvents = imageLock ? "none" : "auto")
-    );
-  }
 }
 
 async function saveImages() {
@@ -105,12 +90,10 @@ async function pasteImage() {
         imgWrapper.classList.add("comm-pare-image-wrapper");
         imgWrapper.style.position = "absolute";
         imgWrapper.style.cursor = "move";
-        imgWrapper.style.left = "calc(50% + 0px)";
+        imgWrapper.style.left = "0px";
         imgWrapper.style.top = "0px";
-        imgWrapper.style.transform = "translateX(-50%)";
         imgWrapper.style.zIndex = "9999";
         imgWrapper.style.opacity = "1";
-        imgWrapper.style.maxWidth = "100%";
 
         const img = document.createElement("img");
         img.src = url;
@@ -125,6 +108,7 @@ async function pasteImage() {
 
         imgWrapper.onclick = () => selectImage(imgWrapper);
         imgWrapper.appendChild(img);
+        imgWrapper.setAttribute("custom-lock-center", "false");
         document.body.appendChild(imgWrapper);
         images.push(imgWrapper); // Store reference to the wrapper
         selectImage(imgWrapper);
@@ -133,6 +117,17 @@ async function pasteImage() {
 
         saveImages(); // Save after adding a new image
         break;
+      } else {
+        const customAlert = document.createElement("div");
+        customAlert.classList.add("custom-alert");
+        customAlert.id = "comm-pare-alert";
+        customAlert.textContent = "Pasted item is not an image.";
+
+        document.body.appendChild(customAlert);
+
+        setTimeout(() => {
+          document.body.removeChild(customAlert);
+        }, 5000);
       }
     }
   }
@@ -155,8 +150,6 @@ async function loadImages() {
         imgWrapper.style.zIndex = "9999";
         imgWrapper.style.left = data.left;
         imgWrapper.style.top = data.top;
-        imgWrapper.style.transform = "translateX(-50%)";
-        imgWrapper.style.maxWidth = "100%";
         imgWrapper.style.cursor = "move";
         imgWrapper.style.opacity = data.opacity;
 
@@ -171,6 +164,7 @@ async function loadImages() {
         };
 
         imgWrapper.appendChild(img);
+        imgWrapper.setAttribute("custom-lock-center", "false");
         imgWrapper.onclick = () => selectImage(imgWrapper);
         document.body.appendChild(imgWrapper);
         images.push(imgWrapper);
@@ -193,8 +187,19 @@ async function loadImages() {
 function addImageToList(img) {
   const imageList = document.getElementById("imageList");
   const imgItem = document.createElement("div");
-  imgItem.textContent = `Image ${images.length}`;
+  imgItem.style.display = "flex";
+  imgItem.style.alignItems = "center";
+  imgItem.style.justifyContent = "flex-start";
   imgItem.style.cursor = "pointer";
+
+  imgItem.onclick = (e) => {
+    e.stopPropagation(); // Prevent triggering the selectImage function
+    selectImage(img);
+  };
+
+  const itemText = document.createElement("p");
+  itemText.textContent = `Image ${images.length}`;
+  itemText.style.marginRight = "auto";
 
   const removeButton = document.createElement("button");
   removeButton.textContent = "x";
@@ -203,8 +208,60 @@ function addImageToList(img) {
     removeImage(img, imgItem);
   };
 
+  const lockButton = document.createElement("button");
+  lockButton.textContent = "c";
+  lockButton.onclick = (e) => {
+    e.stopPropagation(); // Prevent triggering the selectImage function
+    toggleLock(img);
+  };
+
+  const viewButton = document.createElement("button");
+  viewButton.textContent = "v";
+  viewButton.onclick = (e) => {
+    e.stopPropagation(); // Prevent triggering the selectImage function
+    toggleView(img);
+  };
+
+  const lockCenterButton = document.createElement("button");
+  lockCenterButton.textContent = "CC";
+  lockCenterButton.onclick = (e) => {
+    e.stopPropagation(); // Prevent triggering the selectImage function
+    toggleCenter(img);
+  };
+
+  imgItem.appendChild(itemText);
+  imgItem.appendChild(lockButton);
+  imgItem.appendChild(lockCenterButton);
+  imgItem.appendChild(viewButton);
   imgItem.appendChild(removeButton);
   imageList.appendChild(imgItem);
+}
+
+function toggleLock(img) {
+  const imageWrappers = img;
+  imageWrappers.style.pointerEvents =
+    imageWrappers.style.pointerEvents === "none" ? "auto" : "none";
+}
+
+function toggleView(img) {
+  const imageWrappers = img;
+  imageWrappers.style.display =
+    imageWrappers.style.display === "none" ? "block" : "none";
+}
+
+function toggleCenter(img) {
+  const imageWrappers = img;
+  imageWrappers.style.left = "50%";
+  imageWrappers.style.transform =
+    imageWrappers.style.transform === "translateX(-50%)"
+      ? ""
+      : "translateX(-50%)";
+  imageWrappers.setAttribute(
+    "custom-lock-center",
+    imageWrappers.getAttribute("custom-lock-center") === "true"
+      ? "false"
+      : "true"
+  );
 }
 
 function selectImage(selectedImg) {
@@ -227,7 +284,7 @@ function selectImage(selectedImg) {
   };
 
   positionX.oninput = (e) => {
-    selectedImg.style.left = `calc(50% + ${e.target.value}px)`;
+    selectedImg.style.left = `${e.target.value}px`;
     saveImages();
   };
 
@@ -241,11 +298,13 @@ function makeDraggable(img) {
   let offsetX, offsetY;
 
   img.addEventListener("mousedown", (e) => {
-    offsetX = e.clientX - img.getBoundingClientRect().left / 2;
+    offsetX = e.clientX - img.getBoundingClientRect().left;
     offsetY = e.clientY - img.getBoundingClientRect().top;
 
     const onMouseMove = (e) => {
-      img.style.left = `${e.clientX - offsetX + window.scrollX}px`;
+      if (img.getAttribute("custom-lock-center") == "false") {
+        img.style.left = `${e.clientX - offsetX + window.scrollX}px`;
+      }
       img.style.top = `${e.clientY - offsetY + window.scrollY}px`;
 
       // Update the position inputs
@@ -262,6 +321,7 @@ function makeDraggable(img) {
     };
 
     const onMouseUp = () => {
+      saveImages();
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
@@ -289,6 +349,7 @@ const style = `
     background-color: #f5f5f5;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    width: 360px;
 
     position: fixed;
     top: 10px;
@@ -302,11 +363,20 @@ const style = `
     }
 
     #image-controller-menu.minimize {
-    top: -240px;
-    right: -182px;
+    right: -360px;
     opacity: 0.2;
     }
 
+    #image-controller-menu .control-container {
+    display: flex;
+    flex-direction: row;
+    flex-wrap : wrap;
+    gap: 10px;
+    }
+
+    #image-controller-menu input[type="number"] {
+      width: calc(50% - 5px);
+    }
     #image-controller-menu input[type="text"],
     #image-controller-menu input[type="range"] {
     width: 100%;
@@ -350,10 +420,15 @@ const style = `
     transition: background-color 0.3s ease;
     }
 
+    #image-controller-menu button.toggle-active {
+    background-color: #0056b3;
+    
+    }
+
     #image-controller-menu button#closeButton {
     position: absolute;
-    bottom: -15px;
-    left: -15px;
+    top: calc(50% - 15px);
+    left: -30px;
     width: 30px;
     height: 30px;
     padding: 0;
@@ -368,7 +443,6 @@ const style = `
     }
 
     #image-controller-menu #imageList {
-    margin-top: 15px;
     padding: 10px;
     background-color: #f8f9fa;
     border: 1px solid #ddd;
@@ -394,6 +468,20 @@ const style = `
 
     #image-controller-menu #imageList div:hover {
     background-color: #e9ecef;
+    }
+
+    #comm-pare-alert.custom-alert {
+        position: fixed;
+        top: 20px;
+        right: 10px;
+        width: 360px;
+        text-align: center;
+        padding: 10px 20px;
+        background-color: red;
+        color: white;
+        border-radius: 5px;
+        z-index: 9999999;
+}
     }
 
   `;

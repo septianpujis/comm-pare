@@ -16,6 +16,6 @@ comm-pare is a chrome extension for comparing web pages with pasted image from c
 
 ## TODO
 
-- bug in image's position when dragging.
 - add image's name list instead of index
-- add warning popup when pasting non image item.
+- highlight selected image in list
+- all button in one container instead of in list
