@@ -6,7 +6,7 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 function toggleMenu() {
-  const menu = document.getElementById("image-controller-menu");
+  const menu = document.getElementById("comm-pare-popup-menu");
   const imageWrappers = document.getElementsByClassName(
     "comm-pare-image-wrapper"
   );
