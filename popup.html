@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>commpare</title>
+  <link rel="stylesheet" href="font.css">
+  <link rel="stylesheet" href="variables.css">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <h1 class="popup-title">comm<span>pare</span></h1>
+    
+    <div class="upload-paste-container">
+      <div class="upload-section">
+        <label for="fileInput" class="upload-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          Upload
+        </label>
+        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+      </div>
+
+      <div class="paste-section">
+        <button id="pasteBtn" class="paste-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+          </svg>
+          Paste
+        </button>
+      </div>
+    </div>
+
+    <div class="images-list" id="imagesList">
+      <p class="empty-state">No images loaded</p>
+    </div>
+
+    <div class="actions">
+      <button id="toggleBtn" class="toggle-btn">Toggle</button>
+      <button id="clearBtn" class="clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
+

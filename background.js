@@ -1,25 +1,10 @@
-chrome.action.onClicked.addListener((tab) => {
-  chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    function: toggleMenu,
-  });
+// Background service worker
+chrome.runtime.onInstalled.addListener(() => {
+  console.log('commpare extension installed');
 });
 
-function toggleMenu() {
-  const menu = document.getElementById("comm-pare-popup-menu");
-  const imageWrappers = document.getElementsByClassName(
-    "comm-pare-image-wrapper"
-  );
+// Handle extension icon click (optional)
+chrome.action.onClicked.addListener((tab) => {
+  // This will open the popup automatically
+});
 
-  if (menu) {
-    menu.remove(); // Remove if it exists
-    if (imageWrappers.length > 0) {
-      Array.from(imageWrappers).forEach((wrapper) => wrapper.remove());
-    }
-    menuVisible = false;
-    imageLock = false;
-    images = []; // Store all images
-  } else {
-    createMenu(); // Otherwise, create it
-  }
-}

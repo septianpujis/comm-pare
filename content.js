@@ -1,732 +1,437 @@
-let menuVisible = false;
-let imageLock = false;
-let images = []; // Store all images
-let selectedId = null;
+// Content script injected into web pages
+(function() {
+  'use strict';
 
-function createMenu() {
-  const menu = document.createElement("div");
-  menu.id = "comm-pare-popup-menu";
+  let overlayContainer = null;
+  let images = new Map();
+  let isDragging = false;
+  let dragOffset = { x: 0, y: 0 };
+  let currentDragImage = null;
 
-  menu.innerHTML = popupHtml;
-
-  document.body.appendChild(menu);
-
-  // Load images from local storage
-  loadImages();
-
-  // Add event listeners
-  document
-    .querySelector("[comm-pare-custom-id='pasteButton']")
-    .addEventListener("click", () => pasteImage());
-
-  document
-    .querySelector("[comm-pare-custom-id='closeButton']")
-    .addEventListener("click", () => {
-      menuVisible = !menuVisible;
-      menu.classList.toggle("minimize", menuVisible);
-    });
-
-  document
-    .querySelector("[comm-pare-custom-id='removeButton']")
-    .addEventListener("click", () => removeImage(selectedId));
-
-  document
-    .querySelector("[comm-pare-custom-id='lockButton']")
-    .addEventListener("click", () => toggleLock(selectedId));
-
-  document
-    .querySelector("[comm-pare-custom-id='viewButton']")
-    .addEventListener("click", () => toggleView(selectedId));
-
-  document
-    .querySelector("[comm-pare-custom-id='lockCenterButton']")
-    .addEventListener("click", () => toggleCenter(selectedId));
-}
-
-async function saveImages() {
-  const db = await openDB();
-
-  // Clear existing data
-  const clearTransaction = db.transaction(["images"], "readwrite");
-  await clearTransaction.objectStore("images").clear();
-
-  for (let i = 0; i < images.length; i++) {
-    const imgWrapper = images[i];
-    const customId = imgWrapper.getAttribute("custom-id");
-    const img = imgWrapper.querySelector("img");
-    const response = await fetch(img.src);
-    const blob = await response.blob();
-
-    const transaction = db.transaction(["images"], "readwrite");
-    const store = transaction.objectStore("images");
-
-    await store.add({
-      id: i,
-      customId: customId,
-      blob: blob,
-      left: imgWrapper.style.left,
-      top: imgWrapper.style.top,
-      opacity: imgWrapper.style.opacity,
-    });
-
-    await transaction.done;
-  }
-  await clearTransaction.done;
-}
-
-function openDB() {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open("ImageDB", 1);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (event) => {
-      const db = event.target.result;
-      db.createObjectStore("images", { keyPath: "id", autoIncrement: true });
-    };
-  });
-}
-
-async function pasteImage() {
-  const items = await navigator.clipboard.read();
-  for (const item of items) {
-    for (const type of item.types) {
-      if (type.startsWith("image/")) {
-        const blob = await item.getType(type);
-        const url = URL.createObjectURL(blob);
-
-        // Create a wrapper div
-        const imgWrapper = document.createElement("div");
-        imgWrapper.setAttribute("custom-id", Date.now());
-        imgWrapper.classList.add("comm-pare-image-wrapper");
-        imgWrapper.style.position = "absolute";
-        imgWrapper.style.cursor = "move";
-        imgWrapper.style.left = "0px";
-        imgWrapper.style.top = "0px";
-        imgWrapper.style.zIndex = "9999";
-        imgWrapper.style.opacity = "1";
-
-        const img = document.createElement("img");
-        img.src = url;
-
-        img.style.pointerEvents = "none"; // Prevent image from being selected
-        img.style.userSelect = "none"; // Prevent image from being selected
-
-        img.onload = () => {
-          imgWrapper.style.width = `${img.naturalWidth}px`;
-          imgWrapper.style.height = `${img.naturalHeight}px`;
-        };
-
-        imgWrapper.onclick = () => selectImage(imgWrapper);
-        imgWrapper.appendChild(img);
-
-        document.body.appendChild(imgWrapper);
-        images.push(imgWrapper); // Store reference to the wrapper
-        selectImage(imgWrapper);
-        makeDraggable(imgWrapper); // Make the wrapper div draggable
-        addImageToList(imgWrapper); // Add image to the list
-
-        saveImages(); // Save after adding a new image
-        break;
+  // Inject CSS variables
+  function injectCSSVariables() {
+    const style = document.createElement('style');
+    style.id = 'pixel-helper-variables';
+    style.textContent = `
+      #pixel-helper-overlay {
+        --neutral-N00: #ffffff;
+        --neutral-N10: #fbfafa;
+        --neutral-N20: #d0d0d0;
+        --neutral-N50: #63656e;
+        --neutral-N100: #000000;
+        --primary-P10: #f0f1ff;
+        --primary-P20: #dbdcf8;
+        --primary-P30: #bbbdf3;
+        --primary-P40: #9b9dee;
+        --primary-P50: #7a7ce9;
+        --primary-P70: #3b3fea;
+        --primary-P80: #282a94;
+        --danger-D50: #ee4137;
+        --danger-D60: #c6362e;
+        --size-1: 4px;
+        --size-2: 8px;
+        --size-3: 12px;
+        --size-4: 16px;
       }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Initialize overlay
+  function initOverlay() {
+    if (overlayContainer) return;
+
+    injectCSSVariables();
+
+    overlayContainer = document.createElement('div');
+    overlayContainer.className = 'pixel-helper-overlay';
+    overlayContainer.id = 'pixel-helper-overlay';
+    document.body.appendChild(overlayContainer);
+
+    // Load saved images
+    loadImages();
+  }
+
+  // Load images from storage
+  async function loadImages() {
+    try {
+      const result = await chrome.storage.local.get(['images']);
+      const savedImages = result.images || [];
+      
+      savedImages.forEach(imageData => {
+        addImageToOverlay(imageData);
+      });
+    } catch (error) {
+      console.error('Error loading images:', error);
     }
   }
-}
 
-async function loadImages() {
-  const db = await openDB();
-  const transaction = db.transaction("images");
-  const store = transaction.objectStore("images");
-  const request = await store.getAll();
+  // Add image to overlay
+  function addImageToOverlay(imageData) {
+    if (images.has(imageData.id)) {
+      updateImageInOverlay(imageData);
+      return;
+    }
 
-  request.onsuccess = function (event) {
-    const savedImages = event.target.result;
+    const imageWrapper = document.createElement('div');
+    imageWrapper.className = 'pixel-helper-image';
+    imageWrapper.dataset.id = imageData.id;
+    imageWrapper.style.left = `${imageData.position.x}px`;
+    imageWrapper.style.top = `${imageData.position.y}px`;
+    imageWrapper.style.width = typeof imageData.size.width === 'number' ? `${imageData.size.width}px` : imageData.size.width;
+    imageWrapper.style.height = typeof imageData.size.height === 'number' ? `${imageData.size.height}px` : imageData.size.height || 'auto';
+    imageWrapper.style.opacity = imageData.opacity;
+    imageWrapper.style.transform = `rotate(${imageData.rotation}deg)`;
+    imageWrapper.style.zIndex = imageData.zIndex || 1000;
+    imageWrapper.style.display = imageData.visible ? 'block' : 'none';
+    
+    // Apply lock states
+    if (imageData.fullyLocked) {
+      imageWrapper.style.pointerEvents = 'none';
+    }
+    if (imageData.centerLocked) {
+      // Center horizontally
+      const viewportWidth = window.innerWidth;
+      const imgWidth = typeof imageData.size.width === 'number' ? imageData.size.width : 400;
+      imageWrapper.style.left = `${(viewportWidth - imgWidth) / 2}px`;
+    }
 
-    if (Array.isArray(savedImages) && savedImages.length > 0) {
-      for (const data of savedImages) {
-        const imgWrapper = document.createElement("div");
-        imgWrapper.classList.add("comm-pare-image-wrapper");
-        imgWrapper.style.position = "absolute";
-        imgWrapper.style.zIndex = "9999";
-        imgWrapper.style.left = data.left;
-        imgWrapper.style.top = data.top;
-        imgWrapper.style.cursor = "move";
-        imgWrapper.style.opacity = data.opacity;
-        imgWrapper.setAttribute("custom-id", data.customId);
+    const img = document.createElement('img');
+    img.src = imageData.dataUrl;
+    img.draggable = false;
 
-        const img = document.createElement("img");
-        img.src = URL.createObjectURL(data.blob);
-        img.style.pointerEvents = "none";
-        img.style.userSelect = "none";
+    const controls = document.createElement('div');
+    controls.className = 'pixel-helper-image-controls';
+    
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'pixel-helper-image-control-btn';
+    deleteBtn.textContent = '✕';
+    deleteBtn.title = 'Delete';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteImage(imageData.id);
+    });
 
-        img.onload = () => {
-          imgWrapper.style.width = `${img.naturalWidth}px`;
-          imgWrapper.style.height = `${img.naturalHeight}px`;
-        };
+    controls.appendChild(deleteBtn);
+    imageWrapper.appendChild(img);
+    imageWrapper.appendChild(controls);
 
-        imgWrapper.appendChild(img);
-        // imgWrapper.setAttribute("comm-pare-custom-is-center", "false");
-        // imgWrapper.setAttribute("comm-pare-custom-is-lock", "false");
-        // imgWrapper.setAttribute("comm-pare-custom-is-view", "false");
-        imgWrapper.onclick = () => selectImage(imgWrapper);
-        document.body.appendChild(imgWrapper);
-        images.push(imgWrapper);
-
-        makeDraggable(imgWrapper);
-        addImageToList(imgWrapper);
+    overlayContainer.appendChild(imageWrapper);
+    images.set(imageData.id, { element: imageWrapper, data: imageData });
+    
+    // Set up drag functionality after image is added to Map
+    imageWrapper.addEventListener('mousedown', (e) => {
+      if (e.target === deleteBtn || deleteBtn.contains(e.target)) return;
+      
+      // Get imageInfo from Map (should be available now)
+      const imageInfo = images.get(imageData.id);
+      if (!imageInfo || imageInfo.data.fullyLocked) return; // Don't allow dragging if fully locked
+      
+      isDragging = true;
+      currentDragImage = imageWrapper;
+      const rect = imageWrapper.getBoundingClientRect();
+      
+      // Calculate drag offset based on current position
+      // If center locked, only allow vertical dragging
+      if (imageInfo.data.centerLocked) {
+        dragOffset.x = 0; // Don't use X offset for center-locked images
+        dragOffset.y = e.clientY - rect.top;
+      } else {
+        dragOffset.x = e.clientX - rect.left;
+        dragOffset.y = e.clientY - rect.top;
       }
+      
+      imageWrapper.classList.add('dragging');
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  }
+
+  // Update image in overlay
+  function updateImageInOverlay(updateData) {
+    const imageId = updateData.id || (updateData.imageId ? updateData.imageId : null);
+    if (!imageId) return;
+    
+    const imageInfo = images.get(imageId);
+    if (!imageInfo) return;
+
+    const { element, data } = imageInfo;
+    
+    // Update position
+    if (updateData.position !== undefined) {
+      const position = typeof updateData.position === 'object' ? updateData.position : data.position;
+      element.style.left = `${position.x}px`;
+      element.style.top = `${position.y}px`;
+      data.position = position;
+    } else if (updateData.property === 'position' && updateData.value !== undefined) {
+      const position = typeof updateData.value === 'object' ? updateData.value : data.position;
+      element.style.left = `${position.x}px`;
+      element.style.top = `${position.y}px`;
+      data.position = position;
+    }
+    
+    // Update size
+    if (updateData.size !== undefined) {
+      const size = typeof updateData.size === 'object' ? updateData.size : data.size;
+      element.style.width = typeof size.width === 'number' ? `${size.width}px` : size.width;
+      if (size.height) {
+        element.style.height = typeof size.height === 'number' ? `${size.height}px` : size.height;
+      }
+      data.size = size;
+    } else if (updateData.property === 'size' && updateData.value !== undefined) {
+      const size = typeof updateData.value === 'object' ? updateData.value : data.size;
+      element.style.width = typeof size.width === 'number' ? `${size.width}px` : size.width;
+      if (size.height) {
+        element.style.height = typeof size.height === 'number' ? `${size.height}px` : size.height;
+      }
+      data.size = size;
+    }
+    
+    // Update opacity
+    if (updateData.opacity !== undefined) {
+      element.style.opacity = updateData.opacity;
+      data.opacity = updateData.opacity;
+    } else if (updateData.property === 'opacity' && updateData.value !== undefined) {
+      element.style.opacity = updateData.value;
+      data.opacity = updateData.value;
+    }
+    
+    // Update rotation
+    if (updateData.rotation !== undefined) {
+      element.style.transform = `rotate(${updateData.rotation}deg)`;
+      data.rotation = updateData.rotation;
+    } else if (updateData.property === 'rotation' && updateData.value !== undefined) {
+      element.style.transform = `rotate(${updateData.value}deg)`;
+      data.rotation = updateData.value;
+    }
+    
+    // Update visibility
+    if (updateData.visible !== undefined) {
+      element.style.display = updateData.visible ? 'block' : 'none';
+      data.visible = updateData.visible;
+    } else if (updateData.property === 'visible' && updateData.value !== undefined) {
+      element.style.display = updateData.value ? 'block' : 'none';
+      data.visible = updateData.value;
+    }
+    
+    // Update center locked
+    if (updateData.centerLocked !== undefined) {
+      data.centerLocked = updateData.centerLocked;
+      if (updateData.centerLocked) {
+        // Center horizontally
+        const viewportWidth = window.innerWidth;
+        const imgWidth = element.offsetWidth || (typeof data.size.width === 'number' ? data.size.width : 400);
+        const centeredX = (viewportWidth - imgWidth) / 2;
+        element.style.left = `${centeredX}px`;
+        data.position.x = centeredX;
+      }
+    } else if (updateData.property === 'centerLocked' && updateData.value !== undefined) {
+      data.centerLocked = updateData.value;
+      if (updateData.value) {
+        const viewportWidth = window.innerWidth;
+        const imgWidth = element.offsetWidth || (typeof data.size.width === 'number' ? data.size.width : 400);
+        const centeredX = (viewportWidth - imgWidth) / 2;
+        element.style.left = `${centeredX}px`;
+        data.position.x = centeredX;
+      }
+    }
+    
+    // Update fully locked
+    if (updateData.fullyLocked !== undefined) {
+      element.style.pointerEvents = updateData.fullyLocked ? 'none' : 'auto';
+      data.fullyLocked = updateData.fullyLocked;
+    } else if (updateData.property === 'fullyLocked' && updateData.value !== undefined) {
+      element.style.pointerEvents = updateData.value ? 'none' : 'auto';
+      data.fullyLocked = updateData.value;
+    }
+  }
+
+  // Delete image
+  async function deleteImage(imageId) {
+    const imageInfo = images.get(imageId);
+    if (imageInfo) {
+      imageInfo.element.remove();
+      images.delete(imageId);
+    }
+
+    const result = await chrome.storage.local.get(['images']);
+    const savedImages = result.images || [];
+    const filtered = savedImages.filter(img => img.id !== imageId);
+    await chrome.storage.local.set({ images: filtered });
+  }
+
+  // Handle mouse move for dragging
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging || !currentDragImage) return;
+
+    const imageId = currentDragImage.dataset.id;
+    const imageInfo = images.get(imageId);
+    
+    if (!imageInfo || imageInfo.data.fullyLocked) {
+      // Stop dragging if image info is missing or fully locked
+      isDragging = false;
+      if (currentDragImage) {
+        currentDragImage.classList.remove('dragging');
+      }
+      currentDragImage = null;
+      return;
+    }
+
+    let newX, newY;
+    
+    // If center locked, only allow vertical movement
+    if (imageInfo.data.centerLocked) {
+      const viewportWidth = window.innerWidth;
+      const imgWidth = currentDragImage.offsetWidth || (typeof imageInfo.data.size.width === 'number' ? imageInfo.data.size.width : 400);
+      newX = (viewportWidth - imgWidth) / 2;
+      newY = e.clientY - dragOffset.y;
     } else {
-      console.log("No saved images found or invalid data format");
+      newX = e.clientX - dragOffset.x;
+      newY = e.clientY - dragOffset.y;
     }
-  };
 
-  request.onerror = function (event) {
-    console.error("Error loading images:", event.target.error);
-  };
+    currentDragImage.style.left = `${newX}px`;
+    currentDragImage.style.top = `${newY}px`;
 
-  await transaction.done;
-}
-
-function addImageToList(img) {
-  const imageList = document.querySelector("[comm-pare-custom-id='imageList']");
-  const imgItem = document.createElement("div");
-  imgItem.setAttribute("custom-id", img.getAttribute("custom-id"));
-  imgItem.classList.add("comm-pare-image-list-item");
-
-  imgItem.onclick = (e) => {
-    e.stopPropagation(); // Prevent triggering the selectImage function
-    selectImage(img);
-  };
-
-  const itemText = document.createElement("p");
-  itemText.textContent = img.getAttribute("custom-id");
-  itemText.style.marginRight = "auto";
-
-  imgItem.appendChild(itemText);
-  imageList.appendChild(imgItem);
-  selectImage(img);
-}
-
-function toggleLock(id) {
-  const imageWrappers = document.querySelector(
-    `.comm-pare-image-wrapper[custom-id='${id}']`
-  );
-  imageWrappers.style.pointerEvents =
-    imageWrappers.style.pointerEvents === "none" ? "auto" : "none";
-
-  imageWrappers.toggleAttribute("comm-pare-custom-is-lock");
-  document
-    .querySelector("[comm-pare-custom-id='lockButton']")
-    .classList.toggle("second-state");
-}
-
-function toggleView(id) {
-  const imageWrappers = document.querySelector(
-    `.comm-pare-image-wrapper[custom-id='${id}']`
-  );
-  imageWrappers.style.display =
-    imageWrappers.style.display === "none" ? "block" : "none";
-
-  imageWrappers.toggleAttribute("comm-pare-custom-is-view");
-  document
-    .querySelector("[comm-pare-custom-id='viewButton']")
-    .classList.toggle("second-state");
-}
-
-function toggleCenter(id) {
-  const imageWrappers = document.querySelector(
-    `.comm-pare-image-wrapper[custom-id='${id}']`
-  );
-  imageWrappers.style.left = "50%";
-  imageWrappers.style.transform =
-    imageWrappers.style.transform === "translateX(-50%)"
-      ? ""
-      : "translateX(-50%)";
-
-  imageWrappers.toggleAttribute("comm-pare-custom-is-center");
-
-  document
-    .querySelector("[comm-pare-custom-id='lockCenterButton']")
-    .classList.toggle("second-state");
-}
-
-function removeImage(id) {
-  const imgWrapper = document.querySelector(
-    `.comm-pare-image-wrapper[custom-id='${id}']`
-  );
-  images = images.filter((image) => image !== imgWrapper);
-  imgWrapper.remove();
-  document
-    .querySelector(`.comm-pare-image-list-item[custom-id='${id}']`)
-    .remove();
-  saveImages();
-}
-
-function selectImage(selectedImg) {
-  // Set the current image
-  window.currentImage = selectedImg;
-  selectedId = selectedImg.getAttribute("custom-id");
-
-  let isLock = selectedImg.getAttribute("comm-pare-custom-is-lock") != null;
-  let isView = selectedImg.getAttribute("comm-pare-custom-is-view") != null;
-  let isCenter = selectedImg.getAttribute("comm-pare-custom-is-center") != null;
-
-  const displayList = document.getElementsByClassName(
-    "comm-pare-image-list-item"
-  );
-  if (displayList.length > 0) {
-    Array.from(displayList).forEach((node) => {
-      node.classList.remove("comm-pare-image-list-item-selected");
-      if (node.getAttribute("custom-id") == selectedId) {
-        node.classList.add("comm-pare-image-list-item-selected");
+    imageInfo.data.position = { x: newX, y: newY };
+    
+    // Save to storage
+    chrome.storage.local.get(['images'], (result) => {
+      const savedImages = result.images || [];
+      const imageIndex = savedImages.findIndex(img => img.id === imageId);
+      if (imageIndex !== -1) {
+        savedImages[imageIndex].position = { x: newX, y: newY };
+        chrome.storage.local.set({ images: savedImages });
       }
     });
-  }
-
-  const opacitySlider = document.getElementById("opacitySlider");
-  const positionX = document.getElementById("positionX");
-  const positionY = document.getElementById("positionY");
-
-  opacitySlider.value = selectedImg.style.opacity;
-  positionX.value = parseInt(selectedImg.style.left, 10) || 0;
-  positionY.value = parseInt(selectedImg.style.top, 10) || 0;
-
-  document
-    .querySelector("[comm-pare-custom-id='lockButton']")
-    .classList.toggle("second-state", isLock);
-  document
-    .querySelector("[comm-pare-custom-id='viewButton']")
-    .classList.toggle("second-state", isView);
-  document
-    .querySelector("[comm-pare-custom-id='lockCenterButton']")
-    .classList.toggle("second-state", isCenter);
-
-  opacitySlider.oninput = (e) => {
-    selectedImg.style.opacity = e.target.value;
-    saveImages();
-  };
-
-  positionX.oninput = (e) => {
-    selectedImg.style.left = `${e.target.value}px`;
-    saveImages();
-  };
-
-  positionY.oninput = (e) => {
-    selectedImg.style.top = `${e.target.value}px`;
-    saveImages();
-  };
-}
-
-function makeDraggable(img) {
-  let offsetX, offsetY;
-
-  img.addEventListener("mousedown", (e) => {
-    offsetX = e.clientX - img.getBoundingClientRect().left;
-    offsetY = e.clientY - img.getBoundingClientRect().top;
-
-    const onMouseMove = (e) => {
-      if (img.getAttribute("comm-pare-custom-is-center") == null) {
-        img.style.left = `${e.clientX - offsetX + window.scrollX}px`;
-      }
-      img.style.top = `${e.clientY - offsetY + window.scrollY}px`;
-
-      // Update the position inputs
-      if (window.currentImage === img) {
-        document.getElementById("positionX").value = parseInt(
-          img.style.left,
-          10
-        );
-        document.getElementById("positionY").value = parseInt(
-          img.style.top,
-          10
-        );
-      }
-    };
-
-    const onMouseUp = () => {
-      saveImages();
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
   });
 
-  img.style.cursor = "move"; // Change cursor to indicate dragging
-}
+  // Handle mouse up to stop dragging - use capture phase to ensure it fires
+  document.addEventListener('mouseup', (e) => {
+    if (isDragging && currentDragImage) {
+      currentDragImage.classList.remove('dragging');
+      isDragging = false;
+      currentDragImage = null;
+      dragOffset = { x: 0, y: 0 };
+    }
+  }, true);
 
-const popupHtml = `
-  <style>
-    #comm-pare-popup-menu {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      padding: 15px;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-      width: 360px;
+  // Also handle mouse leave to stop dragging when mouse leaves window
+  window.addEventListener('mouseleave', () => {
+    if (isDragging && currentDragImage) {
+      currentDragImage.classList.remove('dragging');
+      isDragging = false;
+      currentDragImage = null;
+      dragOffset = { x: 0, y: 0 };
+    }
+  });
 
-      position: fixed;
-      z-index: 9999999;
-      top: 10px;
-      right: 10px;
-      background-color: rgba(255, 255, 255, 0.8);
-      border: 1px solid #ccc;
-      opacity: 1;
-      transition: all 0.3s ease;
-    }
-
-    #comm-pare-popup-menu.minimize {
-      right: -360px;
-      opacity: 0.2;
-    }
-
-    #comm-pare-popup-menu .control-container {
-      display: flex;
-      flex-direction: row;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    #comm-pare-popup-menu input[type="number"] {
-      width: calc(50% - 5px);
-    }
-    #comm-pare-popup-menu input[type="range"] {
-      width: 100%;
-      padding: 8px 0px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 14px;
-      transition: border-color 0.3s ease;
-    }
-
-    #comm-pare-popup-menu .control-button-container {
-      display: flex;
-      flex-direction: row;
-      justify-content: space-between;
-      gap: 10px;
-      width: 100%;
-    }
-    #comm-pare-popup-menu .control-button-container button {
-      flex-grow: 1;
-      flex-shrink: 0;
-    }
-    #comm-pare-popup-menu .control-button-container svg {
-      width: 24px;
-      height: 24px;
-    }
-
-    #comm-pare-popup-menu input[type="text"]:focus,
-    #comm-pare-popup-menu input[type="range"]:focus {
-      outline: none;
-      border-color: #007bff;
-    }
-
-    #comm-pare-popup-menu input[type="range"] {
-      -webkit-appearance: none;
-      height: 16px;
-      background: #a2cfff;
-      border-radius: 4px;
-      padding: 0;
-    }
-
-    #comm-pare-popup-menu input[type="range"]::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      width: 24px;
-      height: 24px;
-      background: #007bff;
-      border-radius: 50%;
-      cursor: pointer;
-    }
-
-    #comm-pare-popup-menu button {
-      padding: 10px 15px;
-      background-color: #007bff;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      font-size: 14px;
-      cursor: pointer;
-      transition: background-color 0.3s ease;
-    }
-
-    #comm-pare-popup-menu button.toggle-active {
-      background-color: #0056b3;
-    }
-
-    #comm-pare-popup-menu [comm-pare-custom-id="closeButton"] {
-      position: absolute;
-      top: 0;
-      left: -48px;
-      width: 48px;
-      height: 48px;
-      padding: 8px;
-    }
-    #comm-pare-popup-menu [comm-pare-custom-id="closeButton"] svg {
-      transition: transform 0.3s ease;
-    }
-    #comm-pare-popup-menu.minimize [comm-pare-custom-id="closeButton"] svg {
-      transform: rotate(180deg);
-    }
-
-    #comm-pare-popup-menu button:hover {
-      background-color: #a2cfff;
-    }
-
-    #comm-pare-popup-menu button:active {
-      background-color: #004085;
-    }
-
-    #comm-pare-popup-menu [comm-pare-custom-id="imageList"] {
-      padding: 10px;
-      background-color: #f8f9fa;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      max-height: 400px;
-      overflow-y: auto;
-    }
-
-    #comm-pare-popup-menu
-      [comm-pare-custom-id="imageList"]
-      .comm-pare-image-list-item {
-      padding: 12px 4px;
-      font-size: 14px;
-      cursor: pointer;
-      transition: background-color 0.2s ease;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      cursor: pointer;
-    }
-
-    #comm-pare-popup-menu
-      [comm-pare-custom-id="imageList"]
-      .comm-pare-image-list-item:hover {
-      background-color: #e9ecef;
-    }
-
-    #comm-pare-popup-menu
-      [comm-pare-custom-id="imageList"]
-      .comm-pare-image-list-item.comm-pare-image-list-item-selected {
-      background-color: #a2cfff;
-    }
-
-    #comm-pare-popup-menu .control-button-container button {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: space-between;
-      background-color: #444444;
-    }
-    #comm-pare-popup-menu .control-button-container button:hover {
-      background-color: #696969;
-    }
-    #comm-pare-popup-menu .control-button-container button:active {
-      background-color: #333333;
-    }
-
-    #comm-pare-popup-menu .control-button-container button .main-state{
-    display: block;
-    }
-    #comm-pare-popup-menu .control-button-container button .change-state{
-      display: none;
-      }
-
-    #comm-pare-popup-menu .control-button-container button.second-state {
-      background-color: #007bff;
-    }
-    #comm-pare-popup-menu .control-button-container button.second-state:hover {
-      background-color: #3898ff;
-    }
-    #comm-pare-popup-menu .control-button-container button.second-state:active {
-      background-color: #004085;
-    }
-
-    #comm-pare-popup-menu .control-button-container button.second-state .main-state{
-      display: none;
-      }
-      #comm-pare-popup-menu .control-button-container button.second-state .change-state{
-        display: block;
-        }
-
-    #comm-pare-popup-menu .control-button-container button[comm-pare-custom-id="removeButton"] {
-      background-color: #f00060;
-    }
-
-    #comm-pare-popup-menu .control-button-container button[comm-pare-custom-id="removeButton"]:hover {
-      background-color: #bb004b;
-    }
-
-    #comm-pare-popup-menu .control-button-container button[comm-pare-custom-id="removeButton"]:active {
-      background-color: #890037;
-    }
-
-
-
-    #comm-pare-alert.custom-alert {
-      position: fixed;
-      top: 20px;
-      right: 10px;
-      width: 360px;
-      text-align: center;
-      padding: 10px 20px;
-      background-color: red;
-      color: white;
-      border-radius: 5px;
-      z-index: 9999999;
-    }
-  </style>
-  <button comm-pare-custom-id="pasteButton">Paste</button>
-  <div comm-pare-custom-id="imageList"></div>
-
-  <div class="control-container">
-    <input
-      type="range"
-      id="opacitySlider"
-      min="0"
-      max="1"
-      step="0.01"
-      value="1"
-    />
-    <input type="number" id="positionX" placeholder="X Position" />
-    <input type="number" id="positionY" placeholder="Y Position" />
-    <div class="control-button-container">
-      <button comm-pare-custom-id="lockButton">
-        <svg
-          class="main-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-lock"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2M5 8h6a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1"
-          />
-        </svg>
-        <svg
-          class="change-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-unlock"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M11 1a2 2 0 0 0-2 2v4a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h5V3a3 3 0 0 1 6 0v4a.5.5 0 0 1-1 0V3a2 2 0 0 0-2-2M3 8a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1z"
-          />
-        </svg>
-        <p
-          class="main-state"
-        >Lock</p>
-        <p
-          class="change-state"
-        >Unlock</p>
-
-      </button>
-      <button comm-pare-custom-id="viewButton">
-        <svg
-          class="change-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-eye"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z"
-          />
-          <path
-            d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0"
-          />
-        </svg>
-        <svg
-          class="main-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-eye-slash"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M13.359 11.238C15.06 9.72 16 8 16 8s-3-5.5-8-5.5a7 7 0 0 0-2.79.588l.77.771A6 6 0 0 1 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755q-.247.248-.517.486z"
-          />
-          <path
-            d="M11.297 9.176a3.5 3.5 0 0 0-4.474-4.474l.823.823a2.5 2.5 0 0 1 2.829 2.829zm-2.943 1.299.822.822a3.5 3.5 0 0 1-4.474-4.474l.823.823a2.5 2.5 0 0 0 2.829 2.829"
-          />
-          <path
-            d="M3.35 5.47q-.27.24-.518.487A13 13 0 0 0 1.172 8l.195.288c.335.48.83 1.12 1.465 1.755C4.121 11.332 5.881 12.5 8 12.5c.716 0 1.39-.133 2.02-.36l.77.772A7 7 0 0 1 8 13.5C3 13.5 0 8 0 8s.939-1.721 2.641-3.238l.708.709zm10.296 8.884-12-12 .708-.708 12 12z"
-          />
-        </svg>
-        <p
-          class="main-state"
-        >Hide</p>
-        <p
-          class="change-state"
-        >Show</p>
-      </button>
-      <button comm-pare-custom-id="lockCenterButton">
-        <svg
-          class="main-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-align-center"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M8 1a.5.5 0 0 1 .5.5V6h-1V1.5A.5.5 0 0 1 8 1m0 14a.5.5 0 0 1-.5-.5V10h1v4.5a.5.5 0 0 1-.5.5M2 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"
-          />
-        </svg>
-        <svg
-          class="change-state"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-distribute-horizontal"
-          viewBox="0 0 16 16"
-        >
-          <path
-            fill-rule="evenodd"
-            d="M14.5 1a.5.5 0 0 0-.5.5v13a.5.5 0 0 0 1 0v-13a.5.5 0 0 0-.5-.5m-13 0a.5.5 0 0 0-.5.5v13a.5.5 0 0 0 1 0v-13a.5.5 0 0 0-.5-.5"
-          />
-          <path
-            d="M6 13a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H7a1 1 0 0 0-1 1z"
-          />
-        </svg>
+  // Handle window resize to re-center locked images
+  window.addEventListener('resize', () => {
+    images.forEach((imageInfo) => {
+      if (imageInfo.data.centerLocked) {
+        const viewportWidth = window.innerWidth;
+        const imgWidth = imageInfo.element.offsetWidth || (typeof imageInfo.data.size.width === 'number' ? imageInfo.data.size.width : 400);
+        const centeredX = (viewportWidth - imgWidth) / 2;
+        imageInfo.element.style.left = `${centeredX}px`;
+        imageInfo.data.position.x = centeredX;
         
-        <p
-          class="main-state"
-        >Center</p>
-        <p
-          class="change-state"
-        >Free</p>
-      </button>
-      <button comm-pare-custom-id="removeButton">
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          fill="currentColor"
-          class="bi bi-trash"
-          viewBox="0 0 16 16"
-        >
-          <path
-            d="M5.5 5.5A.5.5 0 0 1 6 6v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m2.5 0a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0V6a.5.5 0 0 1 .5-.5m3 .5a.5.5 0 0 0-1 0v6a.5.5 0 0 0 1 0z"
-          />
-          <path
-            d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1H6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1h3.5a1 1 0 0 1 1 1zM4.118 4 4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4zM2.5 3h11V2h-11z"
-          />
-        </svg>
-        <p>Delete</p>
-      </button>
-    </div>
-  </div>
+        chrome.storage.local.get(['images'], (result) => {
+          const savedImages = result.images || [];
+          const imageIndex = savedImages.findIndex(img => img.id === imageInfo.data.id);
+          if (imageIndex !== -1) {
+            savedImages[imageIndex].position.x = centeredX;
+            chrome.storage.local.set({ images: savedImages });
+          }
+        });
+      }
+    });
+  });
 
-  <button comm-pare-custom-id="closeButton">
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      fill="currentColor"
-      class="bi bi-chevron-right"
-      viewBox="0 0 16 16"
-    >
-      <path
-        fill-rule="evenodd"
-        d="M4.646 1.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1 0 .708l-6 6a.5.5 0 0 1-.708-.708L10.293 8 4.646 2.354a.5.5 0 0 1 0-.708"
-      />
-    </svg>
-  </button>
+  // Message listener from popup
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    switch (request.action) {
+      case 'addImage':
+        addImageToOverlay(request.imageData);
+        sendResponse({ success: true });
+        break;
+      
+      case 'updateImage':
+        updateImageInOverlay({
+          imageId: request.imageId,
+          property: request.property,
+          value: request.value
+        });
+        chrome.storage.local.get(['images'], (result) => {
+          const savedImages = result.images || [];
+          const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
+          if (imageIndex !== -1) {
+            if (request.property === 'position' && typeof request.value === 'object') {
+              savedImages[imageIndex].position = request.value;
+            } else if (request.property === 'size' && typeof request.value === 'object') {
+              savedImages[imageIndex].size = request.value;
+            } else {
+              savedImages[imageIndex][request.property] = request.value;
+            }
+            chrome.storage.local.set({ images: savedImages });
+          }
+        });
+        sendResponse({ success: true });
+        break;
+      
+      case 'centerImage':
+        const imageInfo = images.get(request.imageId);
+        if (imageInfo) {
+          const viewportWidth = window.innerWidth;
+          const imgWidth = imageInfo.element.offsetWidth || (typeof imageInfo.data.size.width === 'number' ? imageInfo.data.size.width : 400);
+          const centeredX = (viewportWidth - imgWidth) / 2;
+          imageInfo.element.style.left = `${centeredX}px`;
+          imageInfo.data.position.x = centeredX;
+          
+          chrome.storage.local.get(['images'], (result) => {
+            const savedImages = result.images || [];
+            const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
+            if (imageIndex !== -1) {
+              savedImages[imageIndex].position.x = centeredX;
+              chrome.storage.local.set({ images: savedImages });
+            }
+          });
+        }
+        sendResponse({ success: true });
+        break;
+      
+      case 'deleteImage':
+        deleteImage(request.imageId);
+        sendResponse({ success: true });
+        break;
+      
+      case 'clearImages':
+        images.forEach((imageInfo) => {
+          imageInfo.element.remove();
+        });
+        images.clear();
+        chrome.storage.local.set({ images: [] });
+        sendResponse({ success: true });
+        break;
+      
+      case 'toggleOverlay':
+        if (overlayContainer) {
+          overlayContainer.style.display = overlayContainer.style.display === 'none' ? 'block' : 'none';
+        }
+        sendResponse({ success: true });
+        break;
+    }
+    return true;
+  });
 
-`;
+  // Initialize on page load
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initOverlay);
+  } else {
+    initOverlay();
+  }
+
+  // Also initialize after a short delay to ensure DOM is ready
+  setTimeout(initOverlay, 100);
+})();
+
