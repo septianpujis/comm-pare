@@ -97,7 +97,12 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: var(--size-1);
+  margin-bottom: 0;
+  cursor: pointer;
+}
+
+.image-item-header:hover .accordion-toggle-btn {
+  color: var(--primary-P70);
 }
 
 .image-item-name {
@@ -136,12 +141,81 @@ body {
   color: var(--danger-D50);
 }
 
+.accordion-toggle-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--size-0-5);
+  color: var(--neutral-N50);
+  font-size: var(--size-2);
+  line-height: 1;
+  transition: color 0.2s ease, transform 0.2s ease;
+  display: flex;
+  align-items: center;
+  margin-right: var(--size-1);
+}
+
+.accordion-toggle-btn:hover {
+  color: var(--primary-P70);
+}
+
+.accordion-content {
+  max-height: 1000px;
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  opacity: 1;
+}
+
+.accordion-content.collapsed {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+}
+
+.icon-buttons-row {
+  grid-column: span 3;
+  display: flex;
+  gap: var(--size-1);
+  margin-bottom: var(--size-1);
+  justify-content: center;
+  padding: var(--size-1) 0;
+}
+
+.icon-action-btn {
+  background: none;
+  border: 1px solid var(--neutral-N20);
+  border-radius: var(--size-0-5);
+  cursor: pointer;
+  padding: var(--size-1);
+  color: var(--neutral-N50);
+  font-size: var(--size-3);
+  line-height: 1;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.icon-action-btn:hover {
+  color: var(--primary-P70);
+  border-color: var(--primary-P40);
+  background: var(--neutral-N10);
+}
+
+.icon-action-btn.delete:hover {
+  color: var(--danger-D50);
+  border-color: var(--danger-D40);
+}
+
 .image-controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   grid-template-rows: repeat(2, auto);
   gap: var(--size-1);
   margin-top: var(--size-1);
+  padding-top: var(--size-1);
 }
 
 .control-group {

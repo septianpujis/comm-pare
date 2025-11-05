@@ -118,9 +118,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     const actions = document.createElement('div');
     actions.className = 'image-item-actions';
 
+    // Accordion toggle button
+    const accordionToggleBtn = document.createElement('button');
+    accordionToggleBtn.className = 'accordion-toggle-btn';
+    accordionToggleBtn.innerHTML = '▼';
+    accordionToggleBtn.title = 'Toggle controls';
+    accordionToggleBtn.setAttribute('aria-expanded', 'true');
+
+    actions.appendChild(accordionToggleBtn);
+    header.appendChild(name);
+    header.appendChild(actions);
+
+    // Accordion content wrapper
+    const accordionContent = document.createElement('div');
+    accordionContent.className = 'accordion-content';
+
+    const controls = document.createElement('div');
+    controls.className = 'image-controls';
+
+    // Icon buttons row (all icons inside accordion)
+    const iconButtonsRow = document.createElement('div');
+    iconButtonsRow.className = 'icon-buttons-row';
+
+    // Visibility toggle button
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'icon-action-btn';
+    toggleBtn.textContent = image.visible ? '👁️' : '👁️‍🗨️';
+    toggleBtn.title = image.visible ? 'Hide' : 'Show';
+    toggleBtn.addEventListener('click', () => toggleImageVisibility(image.id));
+
     // Center lock checkbox button
     const centerLockBtn = document.createElement('button');
-    centerLockBtn.className = 'image-item-btn';
+    centerLockBtn.className = 'icon-action-btn';
     centerLockBtn.textContent = image.centerLocked ? '🔒' : '🔓';
     centerLockBtn.title = image.centerLocked ? 'Unlock center' : 'Lock center';
     centerLockBtn.addEventListener('click', async () => {
@@ -140,7 +169,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Full lock switch button
     const fullLockBtn = document.createElement('button');
-    fullLockBtn.className = 'image-item-btn';
+    fullLockBtn.className = 'icon-action-btn';
     fullLockBtn.textContent = image.fullyLocked ? '🔐' : '🔓';
     fullLockBtn.title = image.fullyLocked ? 'Unlock' : 'Lock';
     fullLockBtn.addEventListener('click', async () => {
@@ -150,27 +179,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       fullLockBtn.title = newState ? 'Unlock' : 'Lock';
     });
 
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = 'image-item-btn';
-    toggleBtn.textContent = image.visible ? '👁️' : '👁️‍🗨️';
-    toggleBtn.title = image.visible ? 'Hide' : 'Show';
-    toggleBtn.addEventListener('click', () => toggleImageVisibility(image.id));
-
     const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'image-item-btn delete';
+    deleteBtn.className = 'icon-action-btn delete';
     deleteBtn.textContent = '🗑️';
     deleteBtn.title = 'Delete';
     deleteBtn.addEventListener('click', () => deleteImage(image.id));
 
-    actions.appendChild(centerLockBtn);
-    actions.appendChild(fullLockBtn);
-    actions.appendChild(toggleBtn);
-    actions.appendChild(deleteBtn);
-    header.appendChild(name);
-    header.appendChild(actions);
-
-    const controls = document.createElement('div');
-    controls.className = 'image-controls';
+    iconButtonsRow.appendChild(toggleBtn);
+    iconButtonsRow.appendChild(centerLockBtn);
+    iconButtonsRow.appendChild(fullLockBtn);
+    iconButtonsRow.appendChild(deleteBtn);
+    controls.appendChild(iconButtonsRow);
 
     // First row: X, Y, W (3 columns)
     // Position X
@@ -205,8 +224,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     opacityGroup.classList.add('opacity-group');
     controls.appendChild(opacityGroup);
 
+    accordionContent.appendChild(controls);
     item.appendChild(header);
-    item.appendChild(controls);
+    item.appendChild(accordionContent);
+
+    // Accordion toggle functionality
+    accordionToggleBtn.addEventListener('click', () => {
+      const isExpanded = accordionContent.classList.toggle('collapsed');
+      accordionToggleBtn.setAttribute('aria-expanded', !isExpanded);
+      accordionToggleBtn.innerHTML = isExpanded ? '▶' : '▼';
+    });
 
     return item;
   }
