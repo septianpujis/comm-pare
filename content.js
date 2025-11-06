@@ -93,7 +93,9 @@
       // Center horizontally
       const viewportWidth = window.innerWidth;
       const imgWidth = typeof imageData.size.width === 'number' ? imageData.size.width : 400;
-      imageWrapper.style.left = `${(viewportWidth - imgWidth) / 2}px`;
+      const centeredX = (viewportWidth - imgWidth) / 2;
+      imageWrapper.style.left = `${centeredX}px`;
+      imageData.position.x = centeredX;
     }
 
     const img = document.createElement('img');

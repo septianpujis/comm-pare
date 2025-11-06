@@ -98,6 +98,14 @@ body {
   align-items: center;
   margin-bottom: 0;
   cursor: pointer;
+  padding: var(--size-0-5);
+  margin: calc(var(--size-0-5) * -1);
+  border-radius: var(--size-0-5);
+  transition: background-color 0.2s ease;
+}
+
+.image-item-header:hover {
+  background-color: var(--neutral-N10);
 }
 
 .image-item-header:hover .accordion-toggle-btn {
@@ -144,18 +152,21 @@ body {
   background: none;
   border: none;
   cursor: pointer;
-  padding: var(--size-0-5);
+  padding: var(--size-1);
   color: var(--neutral-N50);
-  font-size: var(--size-2);
+  font-size: var(--size-3);
   line-height: 1;
   transition: color 0.2s ease, transform 0.2s ease;
   display: flex;
   align-items: center;
+  justify-content: center;
   margin-right: var(--size-1);
+  min-width: 24px;
+  min-height: 24px;
 }
 
 .accordion-toggle-btn i {
-  font-size: var(--size-2);
+  font-size: var(--size-3);
   color: inherit;
 }
 
@@ -218,6 +229,24 @@ body {
   border-color: var(--danger-D40);
 }
 
+.icon-action-btn.active {
+  background: var(--primary-P10);
+  border-color: var(--primary-P50);
+  color: var(--primary-P70);
+}
+
+.icon-action-btn.active:hover {
+  background: var(--primary-P20);
+  border-color: var(--primary-P60);
+}
+
+.header-delete-btn {
+  flex: 0 0 auto;
+  margin-right: var(--size-1);
+  min-width: auto;
+  width: auto;
+}
+
 .image-controls {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -244,13 +273,19 @@ body {
 }
 
 .control-input {
-  padding: var(--size-0-5) var(--size-1);
+  padding: var(--size-0-5) 20px var(--size-0-5) var(--size-1);
   border: 1px solid var(--neutral-N20);
   border-radius: var(--size-0-5);
   font: var(--body-b7-4);
   background: var(--neutral-N00);
   color: var(--neutral-N100);
   width: 100%;
+  position: relative;
+}
+
+.control-input.dragging {
+  border-color: var(--primary-P50);
+  background: var(--primary-P10);
 }
 
 .control-input:focus {

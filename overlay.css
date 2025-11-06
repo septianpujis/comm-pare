@@ -12,8 +12,6 @@
   position: absolute;
   pointer-events: auto;
   cursor: move;
-  border: 2px dashed var(--primary-P50);
-  box-sizing: border-box;
   transition: opacity 0.2s ease;
 }
 
