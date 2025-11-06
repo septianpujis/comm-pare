@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Accordion toggle button
     const accordionToggleBtn = document.createElement('button');
     accordionToggleBtn.className = 'accordion-toggle-btn';
-    accordionToggleBtn.innerHTML = '▼';
+    accordionToggleBtn.innerHTML = '<i class="fas fa-chevron-down"></i>';
     accordionToggleBtn.title = 'Toggle controls';
     accordionToggleBtn.setAttribute('aria-expanded', 'true');
 
@@ -143,19 +143,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Visibility toggle button
     const toggleBtn = document.createElement('button');
     toggleBtn.className = 'icon-action-btn';
-    toggleBtn.textContent = image.visible ? '👁️' : '👁️‍🗨️';
+    toggleBtn.innerHTML = image.visible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
     toggleBtn.title = image.visible ? 'Hide' : 'Show';
     toggleBtn.addEventListener('click', () => toggleImageVisibility(image.id));
 
     // Center lock checkbox button
     const centerLockBtn = document.createElement('button');
     centerLockBtn.className = 'icon-action-btn';
-    centerLockBtn.textContent = image.centerLocked ? '🔒' : '🔓';
+    centerLockBtn.innerHTML = image.centerLocked ? '<i class="fas fa-lock"></i>' : '<i class="fas fa-unlock"></i>';
     centerLockBtn.title = image.centerLocked ? 'Unlock center' : 'Lock center';
     centerLockBtn.addEventListener('click', async () => {
       const newState = !image.centerLocked;
       await updateImageProperty(image.id, 'centerLocked', newState);
-      centerLockBtn.textContent = newState ? '🔒' : '🔓';
+      centerLockBtn.innerHTML = newState ? '<i class="fas fa-lock"></i>' : '<i class="fas fa-unlock"></i>';
       centerLockBtn.title = newState ? 'Unlock center' : 'Lock center';
       if (newState) {
         // Center the image horizontally
@@ -170,18 +170,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Full lock switch button
     const fullLockBtn = document.createElement('button');
     fullLockBtn.className = 'icon-action-btn';
-    fullLockBtn.textContent = image.fullyLocked ? '🔐' : '🔓';
+    fullLockBtn.innerHTML = image.fullyLocked ? '<i class="fas fa-lock"></i>' : '<i class="fas fa-unlock"></i>';
     fullLockBtn.title = image.fullyLocked ? 'Unlock' : 'Lock';
     fullLockBtn.addEventListener('click', async () => {
       const newState = !image.fullyLocked;
       await updateImageProperty(image.id, 'fullyLocked', newState);
-      fullLockBtn.textContent = newState ? '🔐' : '🔓';
+      fullLockBtn.innerHTML = newState ? '<i class="fas fa-lock"></i>' : '<i class="fas fa-unlock"></i>';
       fullLockBtn.title = newState ? 'Unlock' : 'Lock';
     });
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'icon-action-btn delete';
-    deleteBtn.textContent = '🗑️';
+    deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
     deleteBtn.title = 'Delete';
     deleteBtn.addEventListener('click', () => deleteImage(image.id));
 
@@ -232,7 +232,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     accordionToggleBtn.addEventListener('click', () => {
       const isExpanded = accordionContent.classList.toggle('collapsed');
       accordionToggleBtn.setAttribute('aria-expanded', !isExpanded);
-      accordionToggleBtn.innerHTML = isExpanded ? '▶' : '▼';
+      accordionToggleBtn.innerHTML = isExpanded ? '<i class="fas fa-chevron-right"></i>' : '<i class="fas fa-chevron-down"></i>';
     });
 
     return item;

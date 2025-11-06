@@ -55,10 +55,9 @@ body {
   transition: all 0.2s ease;
 }
 
-.upload-btn svg,
-.paste-btn svg {
-  width: 14px;
-  height: 14px;
+.upload-btn i,
+.paste-btn i {
+  font-size: 14px;
 }
 
 .upload-btn:hover,
@@ -155,6 +154,11 @@ body {
   margin-right: var(--size-1);
 }
 
+.accordion-toggle-btn i {
+  font-size: var(--size-2);
+  color: inherit;
+}
+
 .accordion-toggle-btn:hover {
   color: var(--primary-P70);
 }
@@ -196,6 +200,11 @@ body {
   justify-content: center;
   flex: 1;
   min-width: 0;
+}
+
+.icon-action-btn i {
+  font-size: var(--size-3);
+  color: inherit;
 }
 
 .icon-action-btn:hover {
