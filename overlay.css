@@ -1,5 +1,5 @@
 .pixel-helper-overlay {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   width: 100%;
@@ -12,7 +12,6 @@
   position: absolute;
   pointer-events: auto;
   cursor: move;
-  transition: opacity 0.2s ease;
 }
 
 .pixel-helper-image.dragging {

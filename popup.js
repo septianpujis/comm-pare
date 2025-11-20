@@ -6,6 +6,50 @@ document.addEventListener('DOMContentLoaded', async () => {
   const toggleBtn = document.getElementById('toggleBtn');
   const clearBtn = document.getElementById('clearBtn');
 
+  // Get current tab ID (always fetch fresh to handle tab switches)
+  async function getCurrentTabId() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        return tab.id;
+      }
+    } catch (error) {
+      console.error('Error getting tab ID:', error);
+    }
+    return null;
+  }
+
+  // Helper function to safely send messages to content script
+  async function safeSendMessage(message) {
+    try {
+      // Check if extension context is still valid
+      if (!chrome.runtime?.id) {
+        console.warn('Extension context invalidated');
+        return { success: false, error: 'Extension context invalidated' };
+      }
+
+      const tabId = await getCurrentTabId();
+      if (!tabId) {
+        console.warn('No active tab found');
+        return { success: false, error: 'No active tab' };
+      }
+
+      return new Promise((resolve) => {
+        chrome.tabs.sendMessage(tabId, message, (response) => {
+          if (chrome.runtime.lastError) {
+            console.warn('Message sending error:', chrome.runtime.lastError.message);
+            resolve({ success: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(response || { success: true });
+          }
+        });
+      });
+    } catch (error) {
+      console.error('Error sending message:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   // Load existing images
   await loadImages();
 
@@ -37,17 +81,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Toggle overlay
   toggleBtn.addEventListener('click', async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: 'toggleOverlay' });
+    await safeSendMessage({ action: 'toggleOverlay' });
   });
 
   // Clear all images
   clearBtn.addEventListener('click', async () => {
     if (confirm('Are you sure you want to clear all images?')) {
-      await chrome.storage.local.set({ images: [] });
-      await loadImages();
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      chrome.tabs.sendMessage(tab.id, { action: 'clearImages' });
+      const tabId = await getCurrentTabId();
+      if (tabId) {
+        const storageKey = `images_${tabId}`;
+        await chrome.storage.local.set({ [storageKey]: [] });
+        await loadImages();
+        await safeSendMessage({ action: 'clearImages' });
+      }
     }
   });
 
@@ -72,16 +118,22 @@ document.addEventListener('DOMContentLoaded', async () => {
           fullyLocked: false
         };
 
-        const result = await chrome.storage.local.get(['images']);
-        const images = result.images || [];
+        const tabId = await getCurrentTabId();
+        if (!tabId) {
+          reject(new Error('No active tab'));
+          return;
+        }
+        
+        const storageKey = `images_${tabId}`;
+        const result = await chrome.storage.local.get([storageKey]);
+        const images = result[storageKey] || [];
         images.push(imageData);
-        await chrome.storage.local.set({ images });
+        await chrome.storage.local.set({ [storageKey]: images });
 
         await loadImages();
         
         // Send to content script
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        chrome.tabs.sendMessage(tab.id, { action: 'addImage', imageData });
+        await safeSendMessage({ action: 'addImage', imageData });
 
         resolve();
         };
@@ -94,19 +146,41 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function loadImages() {
-    const result = await chrome.storage.local.get(['images']);
-    const images = result.images || [];
+    const tabId = await getCurrentTabId();
+    if (!tabId) {
+      imagesList.innerHTML = '<p class="empty-state">No active tab</p>';
+      return;
+    }
+    
+    // Show loading spinner
+    imagesList.innerHTML = `
+      <div class="loading-spinner">
+        <div class="loading-spinner-icon"></div>
+        <div class="loading-spinner-text">Loading images...</div>
+      </div>
+    `;
+    
+    // Small delay to ensure spinner is visible, then load
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    const storageKey = `images_${tabId}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const images = result[storageKey] || [];
 
     if (images.length === 0) {
       imagesList.innerHTML = '<p class="empty-state">No images loaded</p>';
       return;
     }
 
-    imagesList.innerHTML = '';
+    // Use DocumentFragment for better performance
+    const fragment = document.createDocumentFragment();
     images.forEach(image => {
       const item = createImageItem(image);
-      imagesList.appendChild(item);
+      fragment.appendChild(item);
     });
+    
+    imagesList.innerHTML = '';
+    imagesList.appendChild(fragment);
   }
 
   function createImageItem(image) {
@@ -164,9 +238,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     toggleBtn.innerHTML = image.visible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
     toggleBtn.title = image.visible ? 'Hide' : 'Show';
     toggleBtn.addEventListener('click', async () => {
-      await toggleImageVisibility(image.id);
-      // Reload to update button state
-      await loadImages();
+      // Update UI immediately for instant feedback
+      const newVisible = !image.visible;
+      toggleBtn.classList.toggle('active', newVisible);
+      toggleBtn.innerHTML = newVisible ? '<i class="fas fa-eye"></i>' : '<i class="fas fa-eye-slash"></i>';
+      toggleBtn.title = newVisible ? 'Hide' : 'Show';
+      
+      // Update in background
+      await toggleImageVisibility(image.id, false); // false = don't reload
     });
 
     // Center lock checkbox button
@@ -182,8 +261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       centerLockBtn.title = newState ? 'Unlock center' : 'Lock center';
       if (newState) {
         // Center the image horizontally
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        chrome.tabs.sendMessage(tab.id, {
+        await safeSendMessage({
           action: 'centerImage',
           imageId: image.id
         });
@@ -230,8 +308,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Width
     const widthGroup = createControlGroup('W', image.size.width, async (value) => {
-      const result = await chrome.storage.local.get(['images']);
-      const images = result.images || [];
+      const tabId = await getCurrentTabId();
+      if (!tabId) return;
+      
+      const storageKey = `images_${tabId}`;
+      const result = await chrome.storage.local.get([storageKey]);
+      const images = result[storageKey] || [];
       const currentImage = images.find(img => img.id === image.id);
       const currentSize = currentImage ? currentImage.size : image.size;
       updateImageProperty(image.id, 'size', { ...currentSize, width: value === 'auto' ? 'auto' : Number(value) });
@@ -299,9 +381,45 @@ document.addEventListener('DOMContentLoaded', async () => {
     valueDisplay.className = 'control-slider-value';
     valueDisplay.textContent = Math.round(value * 100) + '%';
     
+    // Debounce storage updates but update UI immediately
+    let debounceTimer = null;
+    let isDragging = false;
+    
     slider.addEventListener('input', (e) => {
       const newValue = Number(e.target.value);
       valueDisplay.textContent = Math.round(newValue * 100) + '%';
+      
+      // Update immediately via message (for instant visual feedback)
+      // But debounce storage updates
+      clearTimeout(debounceTimer);
+      
+      // Send immediate update to content script for visual feedback
+      const imageId = slider.closest('.image-item')?.dataset.id;
+      if (imageId) {
+        safeSendMessage({
+          action: 'updateImage',
+          imageId: imageId,
+          property: 'opacity',
+          value: newValue
+        });
+      }
+      
+      // Debounce the storage update
+      debounceTimer = setTimeout(() => {
+        onChange(newValue);
+      }, 50); // 50ms debounce
+    });
+    
+    // Handle mouse down/up for better responsiveness
+    slider.addEventListener('mousedown', () => {
+      isDragging = true;
+    });
+    
+    slider.addEventListener('mouseup', () => {
+      isDragging = false;
+      // Ensure final value is saved immediately when user releases
+      const newValue = Number(slider.value);
+      clearTimeout(debounceTimer);
       onChange(newValue);
     });
 
@@ -322,8 +440,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const input = document.createElement('input');
     input.className = 'control-input';
     input.type = 'text';
-    input.pattern = '[0-9.-]*';
+    input.pattern = '[0-9.\\-]*';
     input.value = value;
+    
+    // Debounce storage updates for text input
+    let inputDebounceTimer = null;
     
     // Validate and handle input
     const handleInput = (e) => {
@@ -340,10 +461,42 @@ document.addEventListener('DOMContentLoaded', async () => {
         const clampedValue = Math.max(min, Math.min(max, numValue));
         if (clampedValue !== numValue) {
           input.value = clampedValue;
-          onChange(clampedValue);
-        } else {
-          onChange(numValue);
         }
+        
+        // Send immediate visual update
+        const imageId = input.closest('.image-item')?.dataset.id;
+        if (imageId && (label === 'X' || label === 'Y')) {
+          // Find the other position input via DOM
+          const imageItem = input.closest('.image-item');
+          const xInput = Array.from(imageItem?.querySelectorAll('.control-group') || []).find(g => 
+            g.querySelector('.control-label')?.textContent === 'X'
+          )?.querySelector('.control-input');
+          const yInput = Array.from(imageItem?.querySelectorAll('.control-group') || []).find(g => 
+            g.querySelector('.control-label')?.textContent === 'Y'
+          )?.querySelector('.control-input');
+          
+          const currentX = label === 'X' ? clampedValue : (xInput ? parseFloat(xInput.value) || 0 : 0);
+          const currentY = label === 'Y' ? clampedValue : (yInput ? parseFloat(yInput.value) || 0 : 0);
+          safeSendMessage({
+            action: 'updateImage',
+            imageId: imageId,
+            property: 'position',
+            value: { x: currentX, y: currentY }
+          });
+        } else if (imageId && label === 'R') {
+          safeSendMessage({
+            action: 'updateImage',
+            imageId: imageId,
+            property: 'rotation',
+            value: clampedValue
+          });
+        }
+        
+        // Debounce storage update
+        clearTimeout(inputDebounceTimer);
+        inputDebounceTimer = setTimeout(() => {
+          onChange(clampedValue !== numValue ? clampedValue : numValue);
+        }, 150); // 150ms debounce for text input
       }
     };
     
@@ -385,6 +538,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         e.preventDefault();
 
         // Add global handlers for dragging
+        let dragDebounceTimer = null;
         dragHandler = (e) => {
           if (!isDragging) return;
           
@@ -397,7 +551,43 @@ document.addEventListener('DOMContentLoaded', async () => {
           const clampedValue = Math.max(min, Math.min(max, newValue));
           
           input.value = clampedValue;
+          
+          // Send immediate visual update
+          const imageId = input.closest('.image-item')?.dataset.id;
+          if (imageId && (label === 'X' || label === 'Y')) {
+            // Find the other position input via DOM
+            const imageItem = input.closest('.image-item');
+            const xInput = imageItem?.querySelector('.control-group:has(.control-label:contains("X")) .control-input') || 
+                          Array.from(imageItem?.querySelectorAll('.control-group') || []).find(g => 
+                            g.querySelector('.control-label')?.textContent === 'X'
+                          )?.querySelector('.control-input');
+            const yInput = imageItem?.querySelector('.control-group:has(.control-label:contains("Y")) .control-input') || 
+                          Array.from(imageItem?.querySelectorAll('.control-group') || []).find(g => 
+                            g.querySelector('.control-label')?.textContent === 'Y'
+                          )?.querySelector('.control-input');
+            
+            const currentX = label === 'X' ? clampedValue : (yInput ? parseFloat(yInput.value) || 0 : 0);
+            const currentY = label === 'Y' ? clampedValue : (xInput ? parseFloat(xInput.value) || 0 : 0);
+            safeSendMessage({
+              action: 'updateImage',
+              imageId: imageId,
+              property: 'position',
+              value: { x: currentX, y: currentY }
+            });
+          } else if (imageId && label === 'R') {
+            safeSendMessage({
+              action: 'updateImage',
+              imageId: imageId,
+              property: 'rotation',
+              value: clampedValue
+            });
+          }
+          
+          // Debounce storage update during drag
+          clearTimeout(dragDebounceTimer);
+          dragDebounceTimer = setTimeout(() => {
           onChange(clampedValue);
+          }, 16); // ~60fps updates
         };
 
         mouseUpHandler = () => {
@@ -406,6 +596,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             input.style.cursor = '';
             input.style.userSelect = '';
             input.classList.remove('dragging');
+            
+            // Save final value immediately
+            const finalValue = parseFloat(input.value) || 0;
+            clearTimeout(dragDebounceTimer);
+            onChange(finalValue);
+            
             document.removeEventListener('mousemove', dragHandler);
             document.removeEventListener('mouseup', mouseUpHandler);
           }
@@ -442,8 +638,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function updateImageProperty(id, property, value) {
-    const result = await chrome.storage.local.get(['images']);
-    const images = result.images || [];
+    const tabId = await getCurrentTabId();
+    if (!tabId) return;
+    
+    const storageKey = `images_${tabId}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const images = result[storageKey] || [];
     const imageIndex = images.findIndex(img => img.id === id);
     
     if (imageIndex !== -1) {
@@ -456,10 +656,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         images[imageIndex][property] = value;
       }
       
-      await chrome.storage.local.set({ images });
+      // Update storage (this is already debounced by callers)
+      await chrome.storage.local.set({ [storageKey]: images });
       
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      chrome.tabs.sendMessage(tab.id, { 
+      // Note: Visual updates are sent immediately by callers, so we don't need to send here
+      // unless this is called directly (not through debounced handlers)
+      // For safety, we still send, but it's debounced at the call site
+      await safeSendMessage({ 
         action: 'updateImage', 
         imageId: id, 
         property, 
@@ -468,30 +671,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  async function toggleImageVisibility(id) {
-    const result = await chrome.storage.local.get(['images']);
-    const images = result.images || [];
+  async function toggleImageVisibility(id, reload = true) {
+    const tabId = await getCurrentTabId();
+    if (!tabId) return;
+    
+    const storageKey = `images_${tabId}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const images = result[storageKey] || [];
     const imageIndex = images.findIndex(img => img.id === id);
     
     if (imageIndex !== -1) {
       images[imageIndex].visible = !images[imageIndex].visible;
-      await chrome.storage.local.set({ images });
-      await loadImages();
+      await chrome.storage.local.set({ [storageKey]: images });
       
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      chrome.tabs.sendMessage(tab.id, { action: 'updateImage', imageId: id, property: 'visible', value: images[imageIndex].visible });
+      if (reload) {
+      await loadImages();
+      }
+      
+      await safeSendMessage({ action: 'updateImage', imageId: id, property: 'visible', value: images[imageIndex].visible });
     }
   }
 
   async function deleteImage(id) {
-    const result = await chrome.storage.local.get(['images']);
-    const images = result.images || [];
+    const tabId = await getCurrentTabId();
+    if (!tabId) return;
+    
+    const storageKey = `images_${tabId}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const images = result[storageKey] || [];
     const filtered = images.filter(img => img.id !== id);
-    await chrome.storage.local.set({ images: filtered });
+    await chrome.storage.local.set({ [storageKey]: filtered });
     await loadImages();
     
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: 'deleteImage', imageId: id });
+    await safeSendMessage({ action: 'deleteImage', imageId: id });
   }
 });
 

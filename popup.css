@@ -84,6 +84,35 @@ body {
   padding: var(--size-4);
 }
 
+.loading-spinner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-4);
+  gap: var(--size-2);
+}
+
+.loading-spinner-icon {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--neutral-N20);
+  border-top-color: var(--primary-P70);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.loading-spinner-text {
+  font: var(--body-b7-4);
+  color: var(--neutral-N50);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .image-item {
   background: var(--neutral-N10);
   border: 1px solid var(--neutral-N20);

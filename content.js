@@ -6,7 +6,10 @@
   let images = new Map();
   let isDragging = false;
   let dragOffset = { x: 0, y: 0 };
+  let dragStartPos = { x: 0, y: 0 }; // Store initial mouse position on drag start
+  let dragStartImagePos = { x: 0, y: 0 }; // Store initial image position on drag start
   let currentDragImage = null;
+  let currentTabId = null;
 
   // Inject CSS variables
   function injectCSSVariables() {
@@ -52,11 +55,41 @@
     loadImages();
   }
 
-  // Load images from storage
+  // Get current tab ID
+  async function getCurrentTabId() {
+    if (currentTabId) return currentTabId;
+    
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'getTabId' }, (response) => {
+        if (response && response.tabId) {
+          currentTabId = response.tabId;
+          resolve(currentTabId);
+        } else {
+          // Fallback: try to get from sender in message listener
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  // Load images from storage for current tab only
   async function loadImages() {
     try {
-      const result = await chrome.storage.local.get(['images']);
-      const savedImages = result.images || [];
+      const tabId = await getCurrentTabId();
+      if (!tabId) {
+        // If we can't get tab ID, don't load images
+        return;
+      }
+      
+      const storageKey = `images_${tabId}`;
+      const result = await chrome.storage.local.get([storageKey]);
+      const savedImages = result[storageKey] || [];
+      
+      // Clear existing images first
+      images.forEach((imageInfo) => {
+        imageInfo.element.remove();
+      });
+      images.clear();
       
       savedImages.forEach(imageData => {
         addImageToOverlay(imageData);
@@ -133,8 +166,19 @@
       currentDragImage = imageWrapper;
       const rect = imageWrapper.getBoundingClientRect();
       
-      // Calculate drag offset based on current position
-      // If center locked, only allow vertical dragging
+      // Store initial positions
+      const currentLeft = parseFloat(imageWrapper.style.left) || 0;
+      const currentTop = parseFloat(imageWrapper.style.top) || 0;
+      const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+      const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+      
+      dragStartPos.x = e.clientX + scrollX; // Store mouse position in document coordinates
+      dragStartPos.y = e.clientY + scrollY;
+      dragStartImagePos.x = currentLeft;
+      dragStartImagePos.y = currentTop;
+      
+      // Calculate drag offset: mouse position relative to image element (in viewport coordinates)
+      // This offset will be used to maintain the mouse position within the image during drag
       if (imageInfo.data.centerLocked) {
         dragOffset.x = 0; // Don't use X offset for center-locked images
         dragOffset.y = e.clientY - rect.top;
@@ -256,10 +300,14 @@
       images.delete(imageId);
     }
 
-    const result = await chrome.storage.local.get(['images']);
-    const savedImages = result.images || [];
+    const tabId = await getCurrentTabId();
+    if (!tabId) return;
+    
+    const storageKey = `images_${tabId}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const savedImages = result[storageKey] || [];
     const filtered = savedImages.filter(img => img.id !== imageId);
-    await chrome.storage.local.set({ images: filtered });
+    await chrome.storage.local.set({ [storageKey]: filtered });
   }
 
   // Handle mouse move for dragging
@@ -279,17 +327,32 @@
       return;
     }
 
+    // Get scroll offsets
+    const scrollX = window.pageXOffset || document.documentElement.scrollLeft || 0;
+    const scrollY = window.pageYOffset || document.documentElement.scrollTop || 0;
+    
+    // Get current mouse position in document coordinates
+    const mouseDocX = e.clientX + scrollX;
+    const mouseDocY = e.clientY + scrollY;
+    
+    // Calculate how much the mouse has moved since drag started
+    const deltaX = mouseDocX - dragStartPos.x;
+    const deltaY = mouseDocY - dragStartPos.y;
+    
+    // Calculate new position: initial image position + mouse movement
     let newX, newY;
     
-    // If center locked, only allow vertical movement
     if (imageInfo.data.centerLocked) {
       const viewportWidth = window.innerWidth;
       const imgWidth = currentDragImage.offsetWidth || (typeof imageInfo.data.size.width === 'number' ? imageInfo.data.size.width : 400);
-      newX = (viewportWidth - imgWidth) / 2;
-      newY = e.clientY - dragOffset.y;
+      // Center position is relative to viewport, so convert to document coordinates
+      newX = (viewportWidth - imgWidth) / 2 + scrollX;
+      // Only apply vertical movement for center-locked images
+      newY = dragStartImagePos.y + deltaY;
     } else {
-      newX = e.clientX - dragOffset.x;
-      newY = e.clientY - dragOffset.y;
+      // Apply full movement
+      newX = dragStartImagePos.x + deltaX;
+      newY = dragStartImagePos.y + deltaY;
     }
 
     currentDragImage.style.left = `${newX}px`;
@@ -297,34 +360,93 @@
 
     imageInfo.data.position = { x: newX, y: newY };
     
-    // Save to storage
-    chrome.storage.local.get(['images'], (result) => {
-      const savedImages = result.images || [];
-      const imageIndex = savedImages.findIndex(img => img.id === imageId);
-      if (imageIndex !== -1) {
-        savedImages[imageIndex].position = { x: newX, y: newY };
-        chrome.storage.local.set({ images: savedImages });
-      }
-    });
+    // Debounce storage updates during drag for better performance
+    if (!imageInfo.dragDebounceTimer) {
+      imageInfo.dragDebounceTimer = null;
+    }
+    
+    clearTimeout(imageInfo.dragDebounceTimer);
+    imageInfo.dragDebounceTimer = setTimeout(() => {
+      // Save to storage for current tab (debounced)
+      getCurrentTabId().then(tabId => {
+        if (!tabId) return;
+        
+        const storageKey = `images_${tabId}`;
+        chrome.storage.local.get([storageKey], (result) => {
+          const savedImages = result[storageKey] || [];
+          const imageIndex = savedImages.findIndex(img => img.id === imageId);
+          if (imageIndex !== -1) {
+            savedImages[imageIndex].position = { x: newX, y: newY };
+            chrome.storage.local.set({ [storageKey]: savedImages });
+          }
+        });
+      });
+    }, 100); // 100ms debounce during drag
   });
 
   // Handle mouse up to stop dragging - use capture phase to ensure it fires
   document.addEventListener('mouseup', (e) => {
     if (isDragging && currentDragImage) {
+      const imageId = currentDragImage.dataset.id;
+      const imageInfo = images.get(imageId);
+      
+      // Save final position immediately when drag ends
+      if (imageInfo) {
+        clearTimeout(imageInfo.dragDebounceTimer);
+        getCurrentTabId().then(tabId => {
+          if (!tabId) return;
+          
+          const storageKey = `images_${tabId}`;
+          chrome.storage.local.get([storageKey], (result) => {
+            const savedImages = result[storageKey] || [];
+            const imageIndex = savedImages.findIndex(img => img.id === imageId);
+            if (imageIndex !== -1) {
+              savedImages[imageIndex].position = imageInfo.data.position;
+              chrome.storage.local.set({ [storageKey]: savedImages });
+            }
+          });
+        });
+      }
+      
       currentDragImage.classList.remove('dragging');
       isDragging = false;
       currentDragImage = null;
       dragOffset = { x: 0, y: 0 };
+      dragStartPos = { x: 0, y: 0 };
+      dragStartImagePos = { x: 0, y: 0 };
     }
   }, true);
 
   // Also handle mouse leave to stop dragging when mouse leaves window
   window.addEventListener('mouseleave', () => {
     if (isDragging && currentDragImage) {
+      const imageId = currentDragImage.dataset.id;
+      const imageInfo = images.get(imageId);
+      
+      // Save final position immediately when drag ends
+      if (imageInfo) {
+        clearTimeout(imageInfo.dragDebounceTimer);
+        getCurrentTabId().then(tabId => {
+          if (!tabId) return;
+          
+          const storageKey = `images_${tabId}`;
+          chrome.storage.local.get([storageKey], (result) => {
+            const savedImages = result[storageKey] || [];
+            const imageIndex = savedImages.findIndex(img => img.id === imageId);
+            if (imageIndex !== -1) {
+              savedImages[imageIndex].position = imageInfo.data.position;
+              chrome.storage.local.set({ [storageKey]: savedImages });
+            }
+          });
+        });
+      }
+      
       currentDragImage.classList.remove('dragging');
       isDragging = false;
       currentDragImage = null;
       dragOffset = { x: 0, y: 0 };
+      dragStartPos = { x: 0, y: 0 };
+      dragStartImagePos = { x: 0, y: 0 };
     }
   });
 
@@ -338,13 +460,18 @@
         imageInfo.element.style.left = `${centeredX}px`;
         imageInfo.data.position.x = centeredX;
         
-        chrome.storage.local.get(['images'], (result) => {
-          const savedImages = result.images || [];
-          const imageIndex = savedImages.findIndex(img => img.id === imageInfo.data.id);
-          if (imageIndex !== -1) {
-            savedImages[imageIndex].position.x = centeredX;
-            chrome.storage.local.set({ images: savedImages });
-          }
+        getCurrentTabId().then(tabId => {
+          if (!tabId) return;
+          
+          const storageKey = `images_${tabId}`;
+          chrome.storage.local.get([storageKey], (result) => {
+            const savedImages = result[storageKey] || [];
+            const imageIndex = savedImages.findIndex(img => img.id === imageInfo.data.id);
+            if (imageIndex !== -1) {
+              savedImages[imageIndex].position.x = centeredX;
+              chrome.storage.local.set({ [storageKey]: savedImages });
+            }
+          });
         });
       }
     });
@@ -352,6 +479,17 @@
 
   // Message listener from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // Get tab ID from sender if available
+    if (sender && sender.tab && sender.tab.id) {
+      const newTabId = sender.tab.id;
+      if (currentTabId !== newTabId) {
+        currentTabId = newTabId;
+        // Reload images when tab ID changes (e.g., user switched tabs)
+        if (overlayContainer) {
+          loadImages();
+        }
+      }
+    }
     switch (request.action) {
       case 'addImage':
         addImageToOverlay(request.imageData);
@@ -364,19 +502,24 @@
           property: request.property,
           value: request.value
         });
-        chrome.storage.local.get(['images'], (result) => {
-          const savedImages = result.images || [];
-          const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
-          if (imageIndex !== -1) {
-            if (request.property === 'position' && typeof request.value === 'object') {
-              savedImages[imageIndex].position = request.value;
-            } else if (request.property === 'size' && typeof request.value === 'object') {
-              savedImages[imageIndex].size = request.value;
-            } else {
-              savedImages[imageIndex][request.property] = request.value;
+        getCurrentTabId().then(tabId => {
+          if (!tabId) return;
+          
+          const storageKey = `images_${tabId}`;
+          chrome.storage.local.get([storageKey], (result) => {
+            const savedImages = result[storageKey] || [];
+            const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
+            if (imageIndex !== -1) {
+              if (request.property === 'position' && typeof request.value === 'object') {
+                savedImages[imageIndex].position = request.value;
+              } else if (request.property === 'size' && typeof request.value === 'object') {
+                savedImages[imageIndex].size = request.value;
+              } else {
+                savedImages[imageIndex][request.property] = request.value;
+              }
+              chrome.storage.local.set({ [storageKey]: savedImages });
             }
-            chrome.storage.local.set({ images: savedImages });
-          }
+          });
         });
         sendResponse({ success: true });
         break;
@@ -390,13 +533,18 @@
           imageInfo.element.style.left = `${centeredX}px`;
           imageInfo.data.position.x = centeredX;
           
-          chrome.storage.local.get(['images'], (result) => {
-            const savedImages = result.images || [];
-            const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
-            if (imageIndex !== -1) {
-              savedImages[imageIndex].position.x = centeredX;
-              chrome.storage.local.set({ images: savedImages });
-            }
+          getCurrentTabId().then(tabId => {
+            if (!tabId) return;
+            
+            const storageKey = `images_${tabId}`;
+            chrome.storage.local.get([storageKey], (result) => {
+              const savedImages = result[storageKey] || [];
+              const imageIndex = savedImages.findIndex(img => img.id === request.imageId);
+              if (imageIndex !== -1) {
+                savedImages[imageIndex].position.x = centeredX;
+                chrome.storage.local.set({ [storageKey]: savedImages });
+              }
+            });
           });
         }
         sendResponse({ success: true });
@@ -412,7 +560,12 @@
           imageInfo.element.remove();
         });
         images.clear();
-        chrome.storage.local.set({ images: [] });
+        getCurrentTabId().then(tabId => {
+          if (tabId) {
+            const storageKey = `images_${tabId}`;
+            chrome.storage.local.set({ [storageKey]: [] });
+          }
+        });
         sendResponse({ success: true });
         break;
       
@@ -428,12 +581,21 @@
 
   // Initialize on page load
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initOverlay);
+    document.addEventListener('DOMContentLoaded', async () => {
+      await getCurrentTabId();
+      initOverlay();
+    });
   } else {
-    initOverlay();
+    (async () => {
+      await getCurrentTabId();
+      initOverlay();
+    })();
   }
 
   // Also initialize after a short delay to ensure DOM is ready
-  setTimeout(initOverlay, 100);
+  setTimeout(async () => {
+    await getCurrentTabId();
+    initOverlay();
+  }, 100);
 })();
 
